@@ -1,0 +1,68 @@
+name: Temporary Flutter SDK dependency resolver
+
+on:
+  push:
+    branches:
+      - maintenance/url-launcher-20261116
+  pull_request:
+    paths:
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'packages/**/pubspec.yaml'
+      - 'packages/**/pubspec.lock'
+      - '.github/workflows/tmp-url-launcher-resolver.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-flutter-deps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Resolve only url_launcher using Flutter's official workspace updater
+        run: bin/flutter update-packages --cherry-pick=url_launcher:6.3.3
+
+      - name: Verify changed files and protected test dependency pins
+        run: |
+          git diff --check
+          git diff --name-only
+          grep -A3 '^  url_launcher:' pubspec.yaml
+          grep -A3 '^  test_api:' packages/flutter_test/pubspec.yaml
+          grep -A3 '^  matcher:' packages/flutter_test/pubspec.yaml
+          grep -A3 '^  meta:' packages/flutter_test/pubspec.yaml
+          grep -A3 '^  url_launcher:' pubspec.lock
+
+      - name: Emit changed manifests and lockfiles for the maintainer
+        run: |
+          echo 'BEGIN_CHANGED_PATHS'
+          git diff --name-only
+          echo 'END_CHANGED_PATHS'
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              */pubspec.yaml|pubspec.yaml|*/pubspec.lock|pubspec.lock)
+                printf 'BEGIN_FILE:%s\n' "$file"
+                cat "$file"
+                printf 'END_FILE:%s\n' "$file"
+                ;;
+            esac
+          done <<EOF
+          $(git diff --name-only)
+          EOF
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flutter-url-launcher-manifests
+          path: |
+            pubspec.yaml
+            pubspec.lock
+          if-no-files-found: error
